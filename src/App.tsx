@@ -18,6 +18,21 @@ import './App.css'
 const WIZARD_SERVICES_PAGE_SIZE = 10
 const WIZARD_METRICS_PAGE_SIZE = 12
 const GROUP_NAME_MAX_LENGTH = 30
+const ENTITY_FILTER_OPTIONS = [
+  { key: 'serviceList', label: 'По списку' },
+  { key: 'probes', label: 'По зондам' },
+  { key: 'contracts', label: 'По контрактам' },
+  { key: 'owners', label: 'По владельцам' },
+  { key: 'accessPoints', label: 'По точкам доступа' },
+  { key: 'metrics', label: 'По показателям' },
+  { key: 'tags', label: 'По тегам' },
+] as const
+type EntityFilter = (typeof ENTITY_FILTER_OPTIONS)[number]['key']
+const METRIC_FILTER_OPTIONS = [
+  { key: 'list', label: 'По списку' },
+  { key: 'dimension', label: 'По измерению' },
+] as const
+type MetricFilter = (typeof METRIC_FILTER_OPTIONS)[number]['key']
 const SIDEBAR_STUB_SECTIONS = [
   {
     title: 'Мониторинг',
@@ -220,6 +235,32 @@ function App() {
       ) : null}
     </Routes>
   )
+}
+
+function getServiceEntityValues(service: Service, entity: EntityFilter): string[] {
+  switch (entity) {
+    case 'serviceList':
+      return [service.name]
+    case 'owners':
+      return [service.owner]
+    case 'contracts':
+      return [`Контракт ${service.type}`, `CTR-${service.id.replace('srv-', '')}`]
+    case 'accessPoints':
+      return [
+        `${service.name.split(' ')[0]} POP`,
+        `AP-${service.tags[0]?.toUpperCase() ?? service.id.toUpperCase()}`,
+      ]
+    case 'probes':
+      return service.type === 'Доступность'
+        ? ['Проба доступности', 'SLA probe']
+        : ['Сервисный зонд']
+    case 'metrics':
+      return service.metrics
+    case 'tags':
+      return service.tags
+    default:
+      return []
+  }
 }
 
 type CorrelatorPageProps = {
@@ -549,7 +590,9 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
 
   const [step, setStep] = useState(1)
   const [serviceTypeFilter, setServiceTypeFilter] = useState<ServiceType | 'Все'>('Все')
-  const [search, setSearch] = useState('')
+  const [entityFilter, setEntityFilter] = useState<EntityFilter>('owners')
+  const [entitySearch, setEntitySearch] = useState('')
+  const [entityMenuOpen, setEntityMenuOpen] = useState(false)
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
     target?.serviceIds ?? [],
   )
@@ -560,16 +603,28 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
   const [submitted, setSubmitted] = useState(false)
   const [servicePage, setServicePage] = useState(1)
   const [metricsPage, setMetricsPage] = useState(1)
+  const [metricFilter, setMetricFilter] = useState<MetricFilter>('list')
+  const [metricSearch, setMetricSearch] = useState('')
+  const [metricMenuOpen, setMetricMenuOpen] = useState(false)
+
+  const entityAutocompleteOptions = useMemo(
+    () =>
+      [...new Set(services.flatMap((service) => getServiceEntityValues(service, entityFilter)))]
+        .filter((value) => value.length > 0)
+        .sort((left, right) => left.localeCompare(right, 'ru')),
+    [entityFilter, services],
+  )
 
   const filteredServices = useMemo(() => {
     return services.filter((service) => {
       const typeFits = serviceTypeFilter === 'Все' || service.type === serviceTypeFilter
-      const textFits = `${service.name} ${service.owner} ${service.tags.join(' ')}`
-        .toLowerCase()
-        .includes(search.toLowerCase())
-      return typeFits && textFits
+      const entityValues = getServiceEntityValues(service, entityFilter)
+      const entityFits =
+        entitySearch.trim().length === 0 ||
+        entityValues.some((value) => value.toLowerCase().includes(entitySearch.toLowerCase().trim()))
+      return typeFits && entityFits
     })
-  }, [search, serviceTypeFilter, services])
+  }, [entityFilter, entitySearch, serviceTypeFilter, services])
 
   const availableMetrics = useMemo(() => {
     const fromSelected = services
@@ -581,7 +636,34 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
   const servicePageCount = Math.max(1, Math.ceil(filteredServices.length / WIZARD_SERVICES_PAGE_SIZE))
   const safeServicePage = Math.min(Math.max(1, servicePage), servicePageCount)
 
-  const metricsPageCount = Math.max(1, Math.ceil(availableMetrics.length / WIZARD_METRICS_PAGE_SIZE))
+  const filteredMetrics = useMemo(() => {
+    const query = metricSearch.toLowerCase().trim()
+    if (query.length === 0) {
+      return availableMetrics
+    }
+
+    return availableMetrics.filter((metric) => {
+      if (metricFilter === 'list') {
+        return metric.toLowerCase().includes(query)
+      }
+      const dimensionId = METRIC_TO_DIMENSION[metric]
+      const dimensionName = METRIC_DIMENSIONS.find((dimension) => dimension.id === dimensionId)?.name ?? ''
+      return dimensionName.toLowerCase().includes(query)
+    })
+  }, [availableMetrics, metricFilter, metricSearch])
+
+  const metricAutocompleteOptions = useMemo(() => {
+    if (metricFilter === 'list') {
+      return availableMetrics
+    }
+
+    return [...new Set(availableMetrics.map((metric) => METRIC_TO_DIMENSION[metric]))]
+      .map((dimensionId) => METRIC_DIMENSIONS.find((dimension) => dimension.id === dimensionId)?.name ?? '')
+      .filter((value) => value.length > 0)
+      .sort((left, right) => left.localeCompare(right, 'ru'))
+  }, [availableMetrics, metricFilter])
+
+  const metricsPageCount = Math.max(1, Math.ceil(filteredMetrics.length / WIZARD_METRICS_PAGE_SIZE))
   const safeMetricsPage = Math.min(Math.max(1, metricsPage), metricsPageCount)
 
   const paginatedServices = useMemo(() => {
@@ -591,8 +673,8 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
 
   const paginatedMetrics = useMemo(() => {
     const start = (safeMetricsPage - 1) * WIZARD_METRICS_PAGE_SIZE
-    return availableMetrics.slice(start, start + WIZARD_METRICS_PAGE_SIZE)
-  }, [availableMetrics, safeMetricsPage])
+    return filteredMetrics.slice(start, start + WIZARD_METRICS_PAGE_SIZE)
+  }, [filteredMetrics, safeMetricsPage])
 
   if (mode === 'edit' && !target) {
     return <Navigate to="/" replace />
@@ -652,17 +734,54 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
                   <option value="Узел">Узел</option>
                 </select>
               </label>
-              <label>
-                Поиск
-                <input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value)
-                    setServicePage(1)
-                  }}
-                  placeholder="Название, владелец, тег"
-                />
-              </label>
+              <div className="entity-search">
+                <button
+                  type="button"
+                  className="entity-search-trigger"
+                  onClick={() => setEntityMenuOpen((current) => !current)}
+                  aria-expanded={entityMenuOpen}
+                >
+                  {ENTITY_FILTER_OPTIONS.find((option) => option.key === entityFilter)?.label}
+                </button>
+                {entityMenuOpen ? (
+                  <div className="entity-search-menu" role="menu">
+                    {ENTITY_FILTER_OPTIONS.map((entityOption) => (
+                      <button
+                        key={entityOption.key}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={entityOption.key === entityFilter}
+                        className={entityOption.key === entityFilter ? 'entity-search-item active' : 'entity-search-item'}
+                        onClick={() => {
+                          setEntityFilter(entityOption.key)
+                          setEntitySearch('')
+                          setServicePage(1)
+                          setEntityMenuOpen(false)
+                        }}
+                      >
+                        {entityOption.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <label className="entity-search-input-wrap">
+                  <span className="visually-hidden">Поиск по выбранной сущности</span>
+                  <input
+                    value={entitySearch}
+                    onChange={(event) => {
+                      setEntitySearch(event.target.value)
+                      setServicePage(1)
+                    }}
+                    list="entity-search-options"
+                    placeholder={`${ENTITY_FILTER_OPTIONS.find((option) => option.key === entityFilter)?.label}:`}
+                  />
+                </label>
+                <datalist id="entity-search-options">
+                  {entityAutocompleteOptions.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </div>
             </div>
 
             <label className="master-checkbox">
@@ -711,22 +830,78 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
 
         {step === 2 ? (
           <section>
+            <div className="filters filters--metrics">
+              <div className="entity-search">
+                <button
+                  type="button"
+                  className="entity-search-trigger"
+                  onClick={() => setMetricMenuOpen((current) => !current)}
+                  aria-expanded={metricMenuOpen}
+                >
+                  {METRIC_FILTER_OPTIONS.find((option) => option.key === metricFilter)?.label}
+                </button>
+                {metricMenuOpen ? (
+                  <div className="entity-search-menu" role="menu">
+                    {METRIC_FILTER_OPTIONS.map((metricOption) => (
+                      <button
+                        key={metricOption.key}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={metricOption.key === metricFilter}
+                        className={metricOption.key === metricFilter ? 'entity-search-item active' : 'entity-search-item'}
+                        onClick={() => {
+                          setMetricFilter(metricOption.key)
+                          setMetricSearch('')
+                          setMetricsPage(1)
+                          setMetricMenuOpen(false)
+                        }}
+                      >
+                        {metricOption.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <label className="entity-search-input-wrap">
+                  <span className="visually-hidden">Поиск показателей</span>
+                  <input
+                    value={metricSearch}
+                    onChange={(event) => {
+                      setMetricSearch(event.target.value)
+                      setMetricsPage(1)
+                    }}
+                    placeholder={
+                      metricFilter === 'dimension'
+                        ? 'Например: Память'
+                        : 'Например: Загрузка CPU %'
+                    }
+                    list="metric-filter-options"
+                  />
+                </label>
+                <datalist id="metric-filter-options">
+                  {metricAutocompleteOptions.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
             <label className="master-checkbox">
               <input
                 type="checkbox"
                 checked={
-                  availableMetrics.length > 0 &&
-                  availableMetrics.every((metric) => selectedMetrics.includes(metric))
+                  filteredMetrics.length > 0 &&
+                  filteredMetrics.every((metric) => selectedMetrics.includes(metric))
                 }
                 onChange={(event) => {
                   if (event.target.checked) {
-                    setSelectedMetrics(availableMetrics)
+                    setSelectedMetrics((current) => [...new Set([...current, ...filteredMetrics])])
                     return
                   }
-                  setSelectedMetrics([])
+                  setSelectedMetrics((current) =>
+                    current.filter((selectedMetric) => !filteredMetrics.includes(selectedMetric)),
+                  )
                 }}
               />
-              Выбрать все показатели
+              Выбрать все показатели в текущем фильтре
             </label>
 
             <div className="list wizard-list">
@@ -746,13 +921,13 @@ function CorrelationWizardPage({ mode, groups, services, onSave }: WizardProps) 
                   <span>{metric}</span>
                 </label>
               ))}
-              {availableMetrics.length === 0 ? (
+              {filteredMetrics.length === 0 ? (
                 <p className="muted">Нет показателей. Вернитесь к выбору сервисов.</p>
               ) : null}
             </div>
             <WizardPagination
               page={safeMetricsPage}
-              totalItems={availableMetrics.length}
+              totalItems={filteredMetrics.length}
               pageSize={WIZARD_METRICS_PAGE_SIZE}
               onPageChange={setMetricsPage}
             />

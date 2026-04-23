@@ -553,9 +553,56 @@
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 280px));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.filters--metrics {
+  margin-bottom: 4px;
+}
+
+.entity-search {
+  position: relative;
+  display: grid;
+  grid-template-columns: 210px minmax(220px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.entity-search-trigger {
+  text-align: left;
+  white-space: nowrap;
+  background: #f8fafc;
+}
+
+.entity-search-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: min(520px, 100%);
+  z-index: 10;
+  background: #ffffff;
+  border: 1px solid #d6dae3;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.entity-search-item {
+  text-align: left;
+  border: 0;
+}
+
+.entity-search-item.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.entity-search-input-wrap {
+  margin: 0;
 }
 
 label {
